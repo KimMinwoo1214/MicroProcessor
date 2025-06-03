@@ -1,46 +1,54 @@
 #include <SoftwareSerial.h>
 #include <Arduino.h>
 
-// 송신부와 동일한 구조체 정의
-struct DataPacket {
-  int  X;
-  int  Y;
-  char buttons[5];
-};
+// SoftwareSerial 객체: RX=10, TX=11 (TX는 필요시만 연결)
+SoftwareSerial mySerial(12, 13);
 
-SoftwareSerial mySerial(12, 13); // RX=12, TX=13 (TX는 필요 시만 연결)
+// 수신한 데이터를 저장할 버퍼 크기
+#define RX_BUFFER_SIZE 32
+char rxBuffer[RX_BUFFER_SIZE];
 
 void setup() {
-  Serial.begin(9600);    // 디버깅용 시리얼 모니터
-  mySerial.begin(9600);  // 송신부와 동일한 보레이트
+  Serial.begin(9600);       // 디버깅용 하드웨어 시리얼
+  mySerial.begin(38400);     // 송신부와 동일한 9600bps
 }
 
 void loop() {
-  // 1) 수신 버퍼에 최소 9바이트 이상 쌓였는지 확인
-  if (mySerial.available() >= sizeof(DataPacket)) {
-    DataPacket rxPacket;
+  // 1) 한 줄 단위로 받을 때까지 기다리기
+  //    readStringUntil('\n')를 사용하거나, 아래처럼 직접 처리 모드도 가능
+  if (mySerial.available()) {
+    // mySerial.readBytesUntil() 등을 사용해도 되지만,
+    // 여기서는 readStringUntil() 형태로 간단히 구현
+    String line = mySerial.readStringUntil('\n'); // '\n' 전까지 읽고 버림
 
-    // 2) 한꺼번에 읽어서 구조체에 덮어쓰기
-    mySerial.readBytes((uint8_t*)&rxPacket, sizeof(rxPacket));
+    // 개행 문자('\n')가 떨어지기 전까지 데이터가 쌓였을 때만 파싱 시도
+    if (line.length() > 0) {
+      // 2) 문자열 예시: "334,582,A0C00"
+      //    콤마(,)로 구분하여 rawX, rawY, buttons 추출
+      int firstComma  = line.indexOf(',');
+      int secondComma = line.indexOf(',', firstComma + 1);
 
-    // 3) 읽어들인 값 확인 (디버깅용)
-    Serial.print("Rx — X: "); Serial.print(rxPacket.X);
-    Serial.print("  Y: ");    Serial.print(rxPacket.Y);
-    Serial.print("  Buttons: ");
-    for (int i = 0; i < 5; i++) {
-      Serial.print(rxPacket.buttons[i]);
+      if (firstComma > 0 && secondComma > firstComma) {
+        // rawX: 0 ~ firstComma-1까지 서브스트링
+        String sX = line.substring(0, firstComma);
+        // rawY: firstComma+1 ~ secondComma-1까지
+        String sY = line.substring(firstComma + 1, secondComma);
+        // buttons: secondComma+1 ~ 끝까지
+        String sBtn = line.substring(secondComma + 1);
+
+        int rawX = sX.toInt();   // 정수로 변환
+        int rawY = sY.toInt();   // 정수로 변환
+        String buttons = sBtn;   // 예: "A0C00"
+
+        // 3) 디버깅용 출력
+        Serial.print("RX >> X: "); Serial.print(rawX);
+        Serial.print("  Y: ");       Serial.print(rawY);
+        Serial.print("  Buttons: "); Serial.println(buttons);
+
+        // 4) 여기에서 rawX, rawY, buttons를 이용한 제어 로직 추가
+        //    예: 모터 속도 결정, LED 토글, 서보 제어 등
+      }
     }
-    Serial.println();
-
-    // 4) 실제 처리 로직
-    //    예: X, Y 값을 이용해서 모터 속도나 조향을 결정하거나,
-    //        버튼 입력에 따라 특정 동작을 수행
-    //
-    //    예시: 간단히 X, Y 값을 PWM 출력으로 그대로 보낼 경우
-    //    analogWrite(LEFT_MOTOR_PIN, map(rxPacket.X, 0, MAX_ADC, 0, 255));
-    //    analogWrite(RIGHT_MOTOR_PIN, map(rxPacket.Y, 0, MAX_ADC, 0, 255));
-    //
-    //    (필요에 따라 map 함수나 제어 로직을 구현하세요.)
   }
 
   delay(10);
