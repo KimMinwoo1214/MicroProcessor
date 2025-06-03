@@ -36,6 +36,12 @@ void setup() {
   init_ADC();
 
   // 버튼 풀업 설정 (active low)
+
+  Serial.begin(9600);
+  mySerial.begin(38400);
+  init_ADC();
+
+  // 버튼 입력 풀업 설정
   DDRD &= ~(PORTD_BUTTON_A | PORTD_BUTTON_B | PORTD_BUTTON_C | PORTD_BUTTON_D);
   PORTD |=  (PORTD_BUTTON_A | PORTD_BUTTON_B | PORTD_BUTTON_C | PORTD_BUTTON_D);
   DDRB &= ~PORTB_BUTTON_E;
@@ -56,6 +62,7 @@ void loop() {
   if (!(PIND & PORTD_BUTTON_D)) btn[3] = 'D';
   if (!(PINB & PORTB_BUTTON_E)) btn[4] = 'E';
 
+
   // 3) buffer에 "X,Y,버튼문자열\n" 형식으로 저장
   //    예: "334,582,A0C00\n"
   char buffer[32];
@@ -66,6 +73,13 @@ void loop() {
   mySerial.print(buffer);
 
   // 5) 디버깅용으로 하드웨어 시리얼에도 출력
+
+  // 문자열로 변환하여 전송: "X,Y,A0C00\n" 형식
+  char buffer[32];
+  snprintf(buffer, sizeof(buffer), "%d,%d,%s\n", rawX, rawY, btn);
+  mySerial.print(buffer);
+
+  // 디버깅용 시리얼 출력
   Serial.print("TX >> ");
   Serial.print(buffer);
 
