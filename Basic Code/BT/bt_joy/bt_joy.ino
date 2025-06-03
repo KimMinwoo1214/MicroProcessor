@@ -37,7 +37,7 @@ int read_ADC(uint8_t channel) {
 
 void setup() {
   Serial.begin(9600);    // 디버깅용 시리얼
-  mySerial.begin(9600);  // 블루투스 통신 속도
+  mySerial.begin(38400);  // 블루투스 통신 속도
   init_ADC();
 
   // 버튼 풀업 설정 (active low)
