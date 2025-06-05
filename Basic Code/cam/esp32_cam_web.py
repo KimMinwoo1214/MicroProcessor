@@ -3,9 +3,9 @@ import requests
 import numpy as np
 
 # — ESP SoftAP 기본 IP 및 포트 —
-STREAM_URL = "http://172.16.66.99:81/stream"
-GPIO_URL   = "http://172.16.66.99/gpio?pin=4&val={}"
-PIN        = 4
+STREAM_URL = "http://192.168.0.174/stream"
+# GPIO_URL   = "http://172.16.66.99/gpio?pin=4&val={}"
+# PIN        = 4
 
 def set_gpio(val):
     try:
