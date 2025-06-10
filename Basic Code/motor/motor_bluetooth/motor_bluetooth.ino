@@ -2,17 +2,17 @@
 #include <Arduino.h>
 
 // PWM 핀 정의
-#define ROLL_PIN     3
-#define PITCH_PIN    5
+#define ROLL_PIN     11
+#define PITCH_PIN    10
 #define THROTTLE_PIN 6
 #define YAW_PIN      9
-#define AUX_PIN     10  // ARM 신호용
+#define AUX_PIN     3  // ARM 신호용
 
-SoftwareSerial mySerial(12, 13); // HC-05 연결 (RX=12, TX=13)
+SoftwareSerial mySerial(A2, A3); // HC-05 연결 (RX=12, TX=13)
 
 int rollPWM     = 1500;
 int pitchPWM    = 1500;
-int throttlePWM = 1000;
+int throttlePWM = 885;
 int yawPWM      = 1000;
 int auxPWM      = 1000;
 
@@ -29,6 +29,8 @@ void setup() {
   pinMode(THROTTLE_PIN, OUTPUT);
   pinMode(YAW_PIN, OUTPUT);
   pinMode(AUX_PIN, OUTPUT);
+  pinMode(A1, OUTPUT);
+  digitalWrite(A1, HIGH);
 
   Serial.begin(9600);
   mySerial.begin(38400);
