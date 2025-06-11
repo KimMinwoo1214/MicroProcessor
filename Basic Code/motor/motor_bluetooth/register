@@ -1,0 +1,118 @@
+#include <SoftwareSerial.h>
+#include <Arduino.h>
+
+#define ROLL_PIN     11  // OCR2A
+#define PITCH_PIN    10  // OCR1B
+#define THROTTLE_PIN 6   // OCR0A
+#define YAW_PIN      9   // OCR1A
+#define AUX_PIN      3   // OCR2B
+
+SoftwareSerial mySerial(A2, A3);
+
+int rollPWM     = 1500;
+int pitchPWM    = 1500;
+int throttlePWM = 885;
+int yawPWM      = 1000;
+int auxPWM      = 1000;
+
+int pwmStep     = 10;
+bool armState   = false;
+bool lastBtnEState = false;
+
+void setup() {
+  Serial.begin(9600);
+  mySerial.begin(38400);
+
+  pinMode(A1, OUTPUT);
+  digitalWrite(A1, HIGH); // 확인용
+
+  // PWM 핀 설정
+  pinMode(ROLL_PIN, OUTPUT);
+  pinMode(PITCH_PIN, OUTPUT);
+  pinMode(THROTTLE_PIN, OUTPUT);
+  pinMode(YAW_PIN, OUTPUT);
+  pinMode(AUX_PIN, OUTPUT);
+
+  setupPWM();
+}
+
+void loop() {
+  if (mySerial.available()) {
+    String line = mySerial.readStringUntil('\n');
+    line.trim();
+
+    int arrowPos = line.indexOf(">>");
+    if (arrowPos != -1) {
+      line = line.substring(arrowPos + 2);
+      line.trim();
+    }
+
+    int c1 = line.indexOf(',');
+    int c2 = line.indexOf(',', c1 + 1);
+
+    if (c1 > 0 && c2 > c1) {
+      int rawX = line.substring(0, c1).toInt();
+      int rawY = line.substring(c1 + 1, c2).toInt();
+      String btn = line.substring(c2 + 1);
+      btn.trim();
+
+      if (btn.indexOf('A') != -1) pitchPWM += pwmStep;
+      if (btn.indexOf('B') != -1) pitchPWM -= pwmStep;
+      if (btn.indexOf('C') != -1) throttlePWM += pwmStep;
+      if (btn.indexOf('D') != -1) throttlePWM -= pwmStep;
+
+      bool currentBtnE = btn.indexOf('E') != -1;
+      if (currentBtnE && !lastBtnEState) {
+        armState = !armState;
+        Serial.print("[ARM TOGGLE] -> ");
+        Serial.println(armState ? "ON" : "OFF");
+      }
+      lastBtnEState = currentBtnE;
+
+      if (rawX < 333) rollPWM = map(rawX, 0, 333, 1000, 1500);
+      else            rollPWM = map(rawX, 333, 675, 1500, 2000);
+
+      if (rawY < 333) yawPWM = map(rawY, 0, 333, 1000, 1500);
+      else            yawPWM = map(rawY, 333, 675, 1500, 2000);
+
+      rollPWM     = constrain(rollPWM,     1000, 2000);
+      pitchPWM    = constrain(pitchPWM,    1000, 2000);
+      throttlePWM = constrain(throttlePWM, 1000, 2000);
+      yawPWM      = constrain(yawPWM,      1000, 2000);
+      auxPWM      = armState ? 1600 : 1000;
+
+      updatePWM();  // 각 PWM 레지스터 값 업데이트
+
+      Serial.print("ROLL: "); Serial.print(rollPWM);
+      Serial.print("  PITCH: "); Serial.print(pitchPWM);
+      Serial.print("  THR: "); Serial.print(throttlePWM);
+      Serial.print("  YAW: "); Serial.print(yawPWM);
+      Serial.print("  AUX: "); Serial.println(auxPWM);
+    }
+  }
+}
+
+// PWM 초기 설정 (주기: 20ms, 분해능 확보)
+void setupPWM() {
+  // Timer0 (8bit, THROTTLE) - Fast PWM
+  TCCR0A = (1 << COM0A1) | (1 << WGM01) | (1 << WGM00);
+  TCCR0B = (1 << CS01); // Prescaler = 8
+
+  // Timer1 (16bit, YAW & PITCH) - Fast PWM, TOP = ICR1
+  TCCR1A = (1 << COM1A1) | (1 << COM1B1) | (1 << WGM11);
+  TCCR1B = (1 << WGM13) | (1 << WGM12) | (1 << CS11); // Prescaler = 8
+  ICR1 = 40000;  // 20ms 주기 (16MHz / 8 / 40000 = 50Hz)
+
+  // Timer2 (8bit, ROLL & AUX) - Fast PWM
+  TCCR2A = (1 << COM2A1) | (1 << COM2B1) | (1 << WGM21) | (1 << WGM20);
+  TCCR2B = (1 << CS21); // Prescaler = 8
+}
+
+// PWM 값 설정 함수
+void updatePWM() {
+  OCR2A = map(rollPWM, 1000, 2000, 64, 128);      // ROLL (Timer2)
+  OCR1B = map(pitchPWM, 1000, 2000, 2000, 4000);  // PITCH (Timer1B)
+  OCR0A = map(throttlePWM, 1000, 2000, 64, 128);  // THROTTLE (Timer0)
+  OCR1A = map(yawPWM, 1000, 2000, 2000, 4000);    // YAW (Timer1A)
+  OCR2B = map(auxPWM, 1000, 2000, 64, 128);       // AUX (Timer2)
+}
