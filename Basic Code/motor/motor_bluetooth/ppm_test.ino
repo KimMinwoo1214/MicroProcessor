@@ -1,7 +1,7 @@
 #include <SoftwareSerial.h>
 #include <Arduino.h>
 
-#define PPM_OUT_PIN 6      // OC1A, PPM 출력 핀
+#define PPM_OUT_PIN 10      // OC1A, PPM 출력 핀
 #define CHANNELS    5
 #define FRAME_US    22500  // 22.5ms PPM 프레임
 #define PULSE_US    300    // 채널 시작 LOW 펄스 길이
@@ -11,10 +11,10 @@ SoftwareSerial mySerial(A2, A3);
 int rollPWM     = 1500;
 int pitchPWM    = 1500;
 int throttlePWM = 1000;
-int yawPWM      = 1000;
+int yawPWM      = 1500;
 int auxPWM      = 1000;
 
-volatile uint16_t ppmValues[CHANNELS] = {1500, 1500, 1000, 1000, 1000};
+volatile uint16_t ppmValues[CHANNELS] = {1500, 1500, 1000, 1500, 1000};
 volatile uint8_t  currentChannel      = 0;
 volatile bool     isPulse             = false;
 volatile uint16_t totalUs             = 0;
