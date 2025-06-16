@@ -1,0 +1,165 @@
+/********************************************************************************
+ * [통합 최종본] PPM 출력 + ARM 상태 연동 사이렌
+ *
+ * - PPM 출력: Timer1, Pin 10 (원본 코드 유지)
+ * - 사이렌 출력: Timer0, Pin 5 (자원 재분배)
+ * - 사이렌 업데이트: Timer2 (자원 재분배)
+ * - 트리거: PPM 코드의 `armState` 변수를 사이렌 On/Off 스위치로 사용
+ * - 경고: Timer0/2 사용으로 관련 표준 기능들(millis, tone 등) 오작동.
+ ********************************************************************************/
+
+#include <Arduino.h>
+#include <NeoSWSerial.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
+
+// --- PPM 관련 ---
+#define PPM_OUT_PIN 10
+#define CHANNELS    5
+#define FRAME_US    22500
+#define PULSE_US    300
+NeoSWSerial mySerial(A2, A3);
+volatile uint16_t ppmValues[CHANNELS] = {1500, 1500, 1000, 1500, 1000};
+volatile uint8_t  currentChannel = 0;
+volatile bool     isPulse = false;
+volatile uint16_t totalUs = 0;
+
+// --- 사이렌 관련 ---
+volatile int g_current_hz = 400;
+volatile int g_siren_direction = 5;
+
+// --- 메인 로직 관련 ---
+int pwmStep = 5;
+volatile bool armState = false; // volatile 키워드 추가 (ISR과 공유)
+bool lastBtnEState = false;
+
+// --- 타이머 설정 함수들 ---
+void setupPPMTimer() {
+  pinMode(PPM_OUT_PIN, OUTPUT);
+  digitalWrite(PPM_OUT_PIN, HIGH);
+  TCCR1A = 0;
+  TCCR1B = (1 << WGM12) | (1 << CS11); // CTC 모드, Prescaler 8
+  OCR1A  = (F_CPU / 8 / 1000000) * PULSE_US;
+  TIMSK1 = (1 << OCIE1A); // Timer1 Compare Match 인터럽트 활성화
+}
+
+void setupSirenTimer() {
+  // Timer0: 톤 생성용 (Pin 5)
+  DDRD |= (1 << DDD5);                   // Pin 5를 출력으로
+  TCCR0A = (1 << WGM01) | (1 << COM0B0); // CTC 모드, OC0B핀 토글
+
+  // Timer2: 사이렌 주파수 업데이트용
+  TCCR2A = (1 << WGM21); // CTC 모드
+  OCR2A = 155;           // 약 10ms 마다 인터럽트
+  TIMSK2 = (1 << OCIE2A); // Timer2 Compare Match 인터럽트 활성화
+}
+
+// --- 인터럽트 서비스 루틴 (ISRs) ---
+ISR(TIMER1_COMPA_vect) { // PPM 출력용
+  if (isPulse) {
+    digitalWrite(PPM_OUT_PIN, HIGH);
+    isPulse = false;
+    if (currentChannel < CHANNELS) {
+      uint16_t dur = ppmValues[currentChannel] - PULSE_US;
+      OCR1A = (F_CPU / 8 / 1000000) * dur;
+      totalUs += ppmValues[currentChannel];
+      currentChannel++;
+    } else {
+      uint16_t syncUs = FRAME_US - totalUs;
+      OCR1A = (F_CPU / 8 / 1000000) * (syncUs - PULSE_US);
+      totalUs = 0;
+      currentChannel = 0;
+    }
+  } else {
+    digitalWrite(PPM_OUT_PIN, LOW);
+    OCR1A = (F_CPU / 8 / 1000000) * PULSE_US;
+    isPulse = true;
+  }
+}
+
+ISR(TIMER2_COMP_vect) { // 사이렌 업데이트용
+  if (!armState) { // ARM 상태가 아니면 타이머 정지
+    TCCR0B &= ~((1 << CS02) | (1 << CS01) | (1 << CS00)); // Timer0 정지 -> 소리 끔
+    return;
+  }
+  
+  // 사이렌 주파수 업데이트 로직
+  g_current_hz += g_siren_direction;
+  if (g_current_hz >= 1200) g_siren_direction = -5;
+  if (g_current_hz <= 400) g_siren_direction = 5;
+  
+  // Timer0 OCR0A 값 변경 (Prescaler=64 기준)
+  OCR0A = (F_CPU / 64 / 2 / g_current_hz) - 1;
+  
+  // Timer0 시작 (Prescaler 64)
+  TCCR0B = (1 << CS01) | (1 << CS00);
+}
+
+// --- 메인 프로그램 ---
+void setup() {
+  Serial.begin(9600);
+  mySerial.begin(9600);
+
+  setupPPMTimer();
+  setupSirenTimer();
+  
+  TCCR2B |= (1 << CS22); // Timer2 시작 (사이렌 업데이트 타이머는 항상 동작)
+  sei(); // 전역 인터럽트 활성화
+}
+
+void loop() {
+  // 시리얼 통신으로 PPM 채널 값과 armState를 업데이트하는 로직
+  if (mySerial.available()) {
+    String line = mySerial.readStringUntil('\n');
+    line.trim();
+
+    int arrow = line.indexOf(">>");
+    if (arrow != -1) {
+      line = line.substring(arrow + 2);
+      line.trim();
+    }
+
+    int c1 = line.indexOf(',');
+    int c2 = line.indexOf(',', c1 + 1);
+    if (c1 > 0 && c2 > c1) {
+      int rawX = line.substring(0, c1).toInt();
+      int rawY = line.substring(c1 + 1, c2).toInt();
+      String btn = line.substring(c2 + 1);
+      btn.trim();
+
+      int throttlePWM, yawPWM, rollPWM, pitchPWM, auxPWM;
+
+      if (btn.indexOf('A') != -1) throttlePWM += pwmStep;
+      if (btn.indexOf('C') != -1) throttlePWM -= pwmStep;
+      
+      if (btn.indexOf('B') != -1) yawPWM = 1550;
+      else if (btn.indexOf('D') != -1) yawPWM = 1450;
+      else yawPWM = 1500;
+
+      bool curE = btn.indexOf('E') != -1;
+      if (curE && !lastBtnEState) {
+        armState = !armState; // armState 토글
+      }
+      lastBtnEState = curE;
+      
+      // ... (나머지 값 계산 로직) ...
+      rollPWM  = map(rawX, 0, 675, 1000, 2000);
+      pitchPWM = map(rawY, 0, 675, 1000, 2000);
+
+      rollPWM     = constrain(rollPWM,     1000, 2000);
+      pitchPWM    = constrain(pitchPWM,    1000, 2000);
+      throttlePWM = constrain(throttlePWM, 1000, 2000);
+      yawPWM      = constrain(yawPWM,      1000, 2000);
+      auxPWM      = armState ? 1600 : 1000;
+
+      // ISR과 공유하는 ppmValues 배열 업데이트 (원자적 접근)
+      noInterrupts();
+      ppmValues[0] = rollPWM;
+      ppmValues[1] = pitchPWM;
+      ppmValues[2] = throttlePWM;
+      ppmValues[3] = yawPWM;
+      ppmValues[4] = auxPWM;
+      interrupts();
+    }
+  }
+}
