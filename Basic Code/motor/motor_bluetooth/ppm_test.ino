@@ -1,12 +1,14 @@
-#include <SoftwareSerial.h>
 #include <Arduino.h>
+#include <NeoSWSerial.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
 
-#define PPM_OUT_PIN 10      // OC1A, PPM 출력 핀
+#define PPM_OUT_PIN 10         // OC1A, PPM 출력 핀
 #define CHANNELS    5
-#define FRAME_US    22500  // 22.5ms PPM 프레임
-#define PULSE_US    300    // 채널 시작 LOW 펄스 길이
+#define FRAME_US    22500      // 22.5ms PPM 프레임
+#define PULSE_US    300        // 채널 시작 LOW 펄스 길이
 
-SoftwareSerial mySerial(A2, A3);
+NeoSWSerial mySerial(A2, A3);  // ← SoftwareSerial → NeoSWSerial
 
 int rollPWM     = 1500;
 int pitchPWM    = 1500;
@@ -19,13 +21,13 @@ volatile uint8_t  currentChannel      = 0;
 volatile bool     isPulse             = false;
 volatile uint16_t totalUs             = 0;
 
-int pwmStep     = 10;
+int pwmStep     = 5;
 bool armState   = false;
 bool lastBtnEState = false;
 
 void setup() {
   Serial.begin(9600);
-  mySerial.begin(38400);
+  mySerial.begin(9600);
 
   pinMode(A1, OUTPUT);
   digitalWrite(A1, HIGH); // 확인용
@@ -55,11 +57,16 @@ void loop() {
       String btn = line.substring(c2 + 1);
       btn.trim();
 
-      if (btn.indexOf('A') != -1) pitchPWM += pwmStep;
-      if (btn.indexOf('B') != -1) pitchPWM -= pwmStep;
-      if (btn.indexOf('C') != -1) throttlePWM += pwmStep;
-      if (btn.indexOf('D') != -1) throttlePWM -= pwmStep;
+      // 스로틀 상하 조정
+      if (btn.indexOf('A') != -1) throttlePWM += pwmStep;
+      if (btn.indexOf('C') != -1) throttlePWM -= pwmStep;
 
+      // YAW는 버튼 누를 때만 특정값, 떼면 복귀
+      if (btn.indexOf('B') != -1) yawPWM = 1550;       // 오른쪽
+      else if (btn.indexOf('D') != -1) yawPWM = 1450;  // 왼쪽
+      else yawPWM = 1500;                              // 중립
+
+      // ARM 토글 버튼 (E)
       bool curE = btn.indexOf('E') != -1;
       if (curE && !lastBtnEState) {
         armState = !armState;
@@ -71,13 +78,13 @@ void loop() {
       if (rawX < 333) rollPWM = map(rawX, 0, 333, 1000, 1500);
       else            rollPWM = map(rawX, 333, 675, 1500, 2000);
 
-      if (rawY < 333) yawPWM = map(rawY, 0, 333, 1000, 1500);
-      else            yawPWM = map(rawY, 333, 675, 1500, 2000);
+      if (rawY < 333) pitchPWM = map(rawY, 0, 333, 1000, 1500);
+      else            pitchPWM = map(rawY, 333, 675, 1500, 2000);
 
-      rollPWM     = constrain(rollPWM,     1000, 2000);
-      pitchPWM    = constrain(pitchPWM,    1000, 2000);
+      rollPWM     = constrain(rollPWM,     1400, 1600);
+      pitchPWM    = constrain(pitchPWM,    1400, 1600);
       throttlePWM = constrain(throttlePWM, 1000, 2000);
-      yawPWM      = constrain(yawPWM,      1000, 2000);
+      yawPWM      = constrain(yawPWM,      1400, 1600);
       auxPWM      = armState ? 1600 : 1000;
 
       noInterrupts();
@@ -97,7 +104,6 @@ void loop() {
   }
 }
 
-// Timer1를 CTC 모드로 설정해서 PPM 생성
 void setupPPMTimer() {
   cli(); // 인터럽트 끔
 
@@ -111,10 +117,8 @@ void setupPPMTimer() {
   sei(); // 인터럽트 켬
 }
 
-// Timer1 비교일치 ISR: PPM 시퀀스 생성
 ISR(TIMER1_COMPA_vect) {
   if (isPulse) {
-    // LOW 펄스 끝 → HIGH 유지
     digitalWrite(PPM_OUT_PIN, HIGH);
     isPulse = false;
 
@@ -124,14 +128,12 @@ ISR(TIMER1_COMPA_vect) {
       totalUs += ppmValues[currentChannel];
       currentChannel++;
     } else {
-      // Sync 구간
       uint16_t syncUs = FRAME_US - totalUs;
       OCR1A = (F_CPU / 8 / 1000000) * (syncUs - PULSE_US);
       totalUs = 0;
       currentChannel = 0;
     }
   } else {
-    // HIGH 구간 끝 → LOW 펄스
     digitalWrite(PPM_OUT_PIN, LOW);
     OCR1A = (F_CPU / 8 / 1000000) * PULSE_US;
     isPulse = true;
